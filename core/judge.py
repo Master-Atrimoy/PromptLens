@@ -14,48 +14,98 @@ from core.schemas import JudgeVerdict, OutputSemanticResult
 from core.ollama_client import OllamaClient
 from core.config import get_config
 
-JUDGE_SYSTEM = """You are an expert prompt engineer evaluating two versions of an LLM prompt.
-Your job is to analyse what semantically changed between them and what effect it had on outputs.
-Respond ONLY with valid JSON — no preamble, no explanation outside the JSON."""
+# Keep system prompt tight — models that don't follow instructions well
+# get confused by long system prompts asking for JSON
+JUDGE_SYSTEM = (
+    "You are an expert prompt engineer. "
+    "You MUST respond with ONLY a JSON object. "
+    "No markdown. No explanation. No preamble. Raw JSON only."
+)
 
-JUDGE_TEMPLATE = """
-## Prompt v1
+# Compact template — shorter context = faster response = less timeout risk
+JUDGE_TEMPLATE = """\
+Compare these two prompt versions and their outputs.
+
+PROMPT V1:
 {prompt_v1}
 
-## Prompt v2
+PROMPT V2:
 {prompt_v2}
 
-## Sample output from v1 (model: {model})
+OUTPUT FROM V1 (model: {model}):
 {output_v1}
 
-## Sample output from v2 (model: {model})
+OUTPUT FROM V2 (model: {model}):
 {output_v2}
 
-Analyse the above and return JSON with exactly these keys:
-{{
-  "intent_change": "<one sentence: what changed in the core intent of the prompt>",
-  "gained": "<what v2 gains over v1>",
-  "lost": "<what v2 loses compared to v1>",
-  "recommendation": "<one of: use_v1 | use_v2 | context_dependent>"
-}}
-"""
+Return ONLY this JSON (no other text):
+{{"intent_change": "one sentence describing what changed in core intent", "gained": "what v2 gains over v1", "lost": "what v2 loses vs v1", "recommendation": "use_v1 or use_v2 or context_dependent"}}"""
 
 
 class Judge:
     def __init__(self, client: OllamaClient, cfg: Optional[DictConfig] = None):
         self.client = client
         self.cfg = cfg or get_config()
-        self.judge_model = self.cfg.ollama.judge_model
+
+    def _pick_judge_model(self) -> Optional[str]:
+        """
+        Pick the best available judge model.
+        Priority: config judge_model → mistral → llama → gemma → first available.
+        Resolves exact installed name via client.
+        """
+        available = self.client.list_local_models()
+        if not available:
+            return None
+
+        # Build priority list
+        preferred = [
+            self.cfg.ollama.judge_model,  # from config
+            "mistral", "llama3", "llama3.1", "gemma3", "gemma",
+        ]
+
+        for candidate in preferred:
+            base = candidate.split(":")[0].lower()
+            for model in available:
+                if model.split(":")[0].lower() == base:
+                    return model  # exact installed name
+
+        # Fallback: just use whatever is first
+        return available[0]
 
     def _extract_json(self, raw: str) -> dict:
-        """Extract JSON from judge response, handling markdown fences."""
-        # Strip markdown code fences
-        cleaned = re.sub(r"```(?:json)?", "", raw).strip()
-        # Find first { ... }
-        match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+        """
+        Robustly extract JSON from model response.
+        Handles: plain JSON, ```json fences, leading/trailing text.
+        """
+        # Strip markdown fences
+        cleaned = re.sub(r"```(?:json)?", "", raw).replace("```", "").strip()
+
+        # Try direct parse first
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Find the first { ... } block (greedy — gets outermost object)
+        match = re.search(r'\{[^{}]*\}', cleaned, re.DOTALL)
         if match:
-            return json.loads(match.group())
-        raise ValueError(f"No valid JSON found in judge response:\n{raw}")
+            try:
+                return json.loads(match.group())
+            except json.JSONDecodeError:
+                pass
+
+        # Last resort: try to extract key-value pairs manually
+        result = {}
+        for key in ("intent_change", "gained", "lost", "recommendation"):
+            pattern = rf'"{key}"\s*:\s*"([^"]*)"'
+            m = re.search(pattern, cleaned)
+            if m:
+                result[key] = m.group(1)
+
+        if result:
+            return result
+
+        raise ValueError(f"Could not extract JSON from:\n{raw[:300]}")
 
     def evaluate(
         self,
@@ -64,64 +114,75 @@ class Judge:
         output_results: list[OutputSemanticResult],
     ) -> JudgeVerdict:
         """
-        Run the judge against the best-shifting model's outputs.
-        Falls back gracefully if the judge model is unavailable.
+        Run the judge. Uses the model with the highest output shift as reference.
+        Always falls back gracefully — never raises.
         """
-        # Pick the model with the highest output shift for the judge input
-        if output_results:
-            ref = max(output_results, key=lambda r: r.score.shift_score)
-        else:
-            return self._fallback_verdict()
+        judge_model = self._pick_judge_model()
+        if not judge_model:
+            return self._fallback("No local models available for judge.")
 
-        prompt = JUDGE_TEMPLATE.format(
-            prompt_v1=prompt_v1,
-            prompt_v2=prompt_v2,
-            model=ref.model_name,
-            output_v1=ref.output_v1[:600],
-            output_v2=ref.output_v2[:600],
+        # Use the model whose outputs shifted most — most informative for the judge
+        valid_results = [
+            r for r in output_results
+            if not r.output_v1.startswith("[ERROR") and not r.output_v2.startswith("[ERROR")
+        ]
+
+        if not valid_results:
+            # All inference errored — judge on prompts alone without output context
+            ref_model = judge_model
+            out_v1 = "(inference failed — judging prompts only)"
+            out_v2 = "(inference failed — judging prompts only)"
+        else:
+            ref = max(valid_results, key=lambda r: r.score.shift_score)
+            ref_model = ref.model_name
+            # Trim outputs — long outputs bloat the context and slow the judge
+            out_v1 = ref.output_v1[:400].strip()
+            out_v2 = ref.output_v2[:400].strip()
+
+        judge_prompt = JUDGE_TEMPLATE.format(
+            prompt_v1=prompt_v1[:500],
+            prompt_v2=prompt_v2[:500],
+            model=ref_model,
+            output_v1=out_v1,
+            output_v2=out_v2,
         )
 
-        # Check model availability
-        if not self.client.is_model_available(self.judge_model):
-            # Try first available model
-            available = self.client.list_local_models()
-            if available:
-                self.judge_model = available[0]
-            else:
-                return self._fallback_verdict()
-
-        raw, _, _ = self.client.generate(
-            model=self.judge_model,
-            prompt=prompt,
+        raw, latency, _ = self.client.generate(
+            model=judge_model,
+            prompt=judge_prompt,
             system=JUDGE_SYSTEM,
         )
+
+        if raw.startswith("[ERROR"):
+            return self._fallback(f"Judge model error: {raw}", judge_model)
 
         try:
             data = self._extract_json(raw)
             return JudgeVerdict(
-                intent_change=data.get("intent_change", "Unable to determine."),
-                gained=data.get("gained", "N/A"),
-                lost=data.get("lost", "N/A"),
-                recommendation=data.get("recommendation", "context_dependent"),
+                intent_change=data.get("intent_change") or "Unable to determine.",
+                gained=data.get("gained") or "N/A",
+                lost=data.get("lost") or "N/A",
+                recommendation=data.get("recommendation") or "context_dependent",
                 raw_verdict=raw,
-                judge_model=self.judge_model,
+                judge_model=judge_model,
             )
         except Exception as e:
+            # JSON parse failed but we have a raw response — surface it
             return JudgeVerdict(
-                intent_change="Could not parse judge response.",
-                gained="N/A",
-                lost="N/A",
+                intent_change=f"Judge responded but JSON parse failed: {e}",
+                gained="See raw verdict",
+                lost="See raw verdict",
                 recommendation="context_dependent",
-                raw_verdict=raw,
-                judge_model=self.judge_model,
+                raw_verdict=raw[:600],
+                judge_model=judge_model,
             )
 
-    def _fallback_verdict(self) -> JudgeVerdict:
+    def _fallback(self, reason: str, model: str = "none") -> JudgeVerdict:
         return JudgeVerdict(
-            intent_change="Judge unavailable — no local models found.",
+            intent_change=reason,
             gained="N/A",
             lost="N/A",
             recommendation="context_dependent",
             raw_verdict="",
-            judge_model="none",
+            judge_model=model,
         )

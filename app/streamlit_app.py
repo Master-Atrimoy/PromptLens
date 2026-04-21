@@ -1,5 +1,5 @@
 """
-Prompt Diff Visualizer — Streamlit UI
+PromptLens — Streamlit UI
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from core.differ import summarise_anatomy_changes
 # Page config — must be first Streamlit call
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Prompt Diff Visualizer",
+    page_title="PromptLens",
     page_icon="🔍",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -446,13 +446,17 @@ def main():
     # Header
     st.markdown(
         '<div class="pdv-header">'
-        '<h1>🔍 Prompt Diff Visualizer</h1>'
-        '<p>'
+        '<h1>🔍 PromptLens</h1>'
+        '<p style="color:#94a3b8;font-size:0.95rem;margin:6px 0 10px;line-height:1.5;">'
+        'Semantic diff for LLM prompts — understand what actually changed in intent, '
+        'how different models respond, and which version performs better.'
+        '</p>'
+        '<p style="margin:0;">'
         '<span class="pdv-badge">Semantic scoring</span>'
         '<span class="pdv-badge">Anatomy tagging</span>'
         '<span class="pdv-badge">Multi-model</span>'
         '<span class="pdv-badge">LLM judge</span>'
-        '<span class="pdv-badge">100% local</span>'
+        '<span class="pdv-badge">100% local Ollama</span>'
         '</p>'
         '</div>',
         unsafe_allow_html=True,

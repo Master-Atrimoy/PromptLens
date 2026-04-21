@@ -2,11 +2,11 @@
 
 ollama:
   base_url: "http://localhost:11434"
-  timeout: 120
+  timeout: 180
   default_models:
-    - "llama3.1:8b"
+    - "llama3"
     - "mistral"
-    - "gemma3"
+    - "gemma"
   embedding_model: "nomic-embed-text"
   judge_model: "mistral"
 
@@ -20,11 +20,11 @@ scoring:
 
 inference:
   temperature: 0.7
-  max_tokens: 1024
+  max_tokens: 512
   parallel: true
 
 ui:
-  page_title: "Prompt Diff Visualizer"
+  page_title: "PromptLens"
   page_icon: "🔍"
   layout: "wide"
 

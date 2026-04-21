@@ -17,7 +17,7 @@
 
 ## The problem
 
-Most prompt iteration tools show you a character-level diff — essentially `git diff` for text. That tells you *what changed*, not whether the *intent changed*.
+Most prompt iteration tools show you a character-level diff — essentially `git diff` for text. That tells you _what changed_, not whether the _intent changed_.
 When working with LLMs, small wording tweaks can lead to large behavioral shifts. Without deeper analysis, you're guessing.
 
 ---
@@ -25,6 +25,7 @@ When working with LLMs, small wording tweaks can lead to large behavioral shifts
 ## The solution
 
 PromptLens analyzes prompt changes at three levels:
+
 - **Intent shift** — did the meaning change?
 - **Model behavior** — how do different models respond?
 - **Outcome quality** — which version is actually better?
@@ -33,15 +34,15 @@ PromptLens analyzes prompt changes at three levels:
 
 ## Capabilities
 
-- **Three-layer semantic assessment** — prompt intent score, per-model output shift score, anatomy breakdown  
-- **Local model discovery** — auto-detects all pulled Ollama models; no manual config needed  
-- **Parallel inference** — all models run concurrently via `asyncio`  
-- **Anatomy tagger** — classifies every changed segment by prompt component type  
-- **LLM judge** — structured verdict (intent change / gained / lost / recommendation) from a local model  
-- **Graceful fallback** — if `nomic-embed-text` isn't installed, falls back to TF-IDF cosine similarity automatically  
-- **Dual interface** — Streamlit UI for interactive use, Typer CLI for scripting/CI pipelines  
-- **Pydantic v2 schemas** — all data models typed and validated end-to-end  
-- **Hydra config** — all thresholds, model defaults, and inference settings in `conf/config.yaml`  
+- **Three-layer semantic assessment** — prompt intent score, per-model output shift score, anatomy breakdown
+- **Local model discovery** — auto-detects all pulled Ollama models; no manual config needed
+- **Parallel inference** — models run concurrently via `ThreadPoolExecutor`; v1/v2 pairs run sequentially per model to avoid GPU contention
+- **Anatomy tagger** — classifies every changed segment by prompt component type
+- **LLM judge** — structured verdict (intent change / gained / lost / recommendation) from a local model
+- **Graceful fallback** — if `nomic-embed-text` isn't installed, falls back to TF-IDF cosine similarity automatically
+- **Dual interface** — Streamlit UI for interactive use, Typer CLI for scripting/CI pipelines
+- **Pydantic v2 schemas** — all data models typed and validated end-to-end
+- **Hydra config** — all thresholds, model defaults, and inference settings in `conf/config.yaml`
 
 ---
 
@@ -97,13 +98,13 @@ Prompt v2 ──┘
 
 ## Shift level classification
 
-| Score range | Level | Meaning |
-|---|---|---|
-| ≥ 0.95 | ✅ Trivial | Wording only — meaning unchanged |
-| 0.85–0.95 | 🔵 Minor | Light rewording — minor intent shift |
-| 0.65–0.85 | 🟡 Moderate | Notable intent shift — review carefully |
-| 0.40–0.65 | 🟠 Major | Significant restructure — different approach |
-| < 0.40 | 🔴 Fundamental | Entirely different prompt |
+| Score range | Level          | Meaning                                      |
+| ----------- | -------------- | -------------------------------------------- |
+| ≥ 0.95      | ✅ Trivial     | Wording only — meaning unchanged             |
+| 0.85–0.95   | 🔵 Minor       | Light rewording — minor intent shift         |
+| 0.65–0.85   | 🟡 Moderate    | Notable intent shift — review carefully      |
+| 0.40–0.65   | 🟠 Major       | Significant restructure — different approach |
+| < 0.40      | 🔴 Fundamental | Entirely different prompt                    |
 
 Thresholds are configurable in `conf/config.yaml`.
 
@@ -111,8 +112,9 @@ Thresholds are configurable in `conf/config.yaml`.
 
 ## Prerequisites
 
-1. **Python 3.10+**
-2. **[Ollama](https://ollama.com)** installed and running locally
+**Python 3.11+**
+
+**[Ollama](https://ollama.com)** installed and running locally
 
 Pull at least one inference model and the embedding model:
 
@@ -152,6 +154,7 @@ streamlit run app/streamlit_app.py
 Open `http://localhost:8501` in your browser.
 
 **What you'll see:**
+
 1. **Sidebar** — live model list pulled from your local Ollama, model selector, judge toggle
 2. **Input panel** — side-by-side prompt text areas (or upload `.txt` files), 3 built-in example pairs
 3. **Semantic score** — colour-coded shift badge with similarity and shift values
@@ -188,9 +191,9 @@ All settings live in `conf/config.yaml` (managed by Hydra):
 
 ```yaml
 ollama:
-  base_url: "http://localhost:11434"   # Change for remote Ollama
+  base_url: "http://localhost:11434" # Change for remote Ollama
   embedding_model: "nomic-embed-text"
-  judge_model: "mistral"               # Any local model for the judge
+  judge_model: "mistral" # Any local model for the judge
 
 scoring:
   thresholds:
@@ -202,7 +205,7 @@ scoring:
 inference:
   temperature: 0.7
   max_tokens: 1024
-  parallel: true                       # false = sequential (debug mode)
+  parallel: true # false = sequential (debug mode)
 ```
 
 Override any value at runtime via Hydra CLI syntax:
@@ -257,29 +260,29 @@ Tests cover: anatomy classifier, structural differ, cosine similarity, TF-IDF fa
 
 ## Extending the project
 
-| What to add | Where |
-|---|---|
-| New anatomy pattern | `core/differ.py` → `ANATOMY_PATTERNS` |
-| New shift threshold | `conf/config.yaml` → `scoring.thresholds` |
-| New scoring metric (BLEU, ROUGE) | `core/scorer.py` (new module) |
-| Save reports to disk | `core/pipeline.py` + `cli.py --save` flag |
-| Multi-turn prompt diffs | Extend `core/schemas.py` with `ConversationDiff` |
+| What to add                      | Where                                            |
+| -------------------------------- | ------------------------------------------------ |
+| New anatomy pattern              | `core/differ.py` → `ANATOMY_PATTERNS`            |
+| New shift threshold              | `conf/config.yaml` → `scoring.thresholds`        |
+| New scoring metric (BLEU, ROUGE) | `core/scorer.py` (new module)                    |
+| Save reports to disk             | `core/pipeline.py` + `cli.py --save` flag        |
+| Multi-turn prompt diffs          | Extend `core/schemas.py` with `ConversationDiff` |
 
 ---
 
 ## Tech stack
 
-| Layer | Library |
-|---|---|
-| Data validation | Pydantic v2 |
-| Configuration | Hydra + OmegaConf |
-| LLM inference | Ollama (local) via httpx |
-| Async execution | asyncio + httpx AsyncClient |
-| UI | Streamlit |
-| CLI | Typer + Rich |
+| Layer            | Library                                       |
+| ---------------- | --------------------------------------------- |
+| Data validation  | Pydantic v2                                   |
+| Configuration    | Hydra + OmegaConf                             |
+| LLM inference    | Ollama (local) via httpx                      |
+| Async execution  | asyncio + httpx AsyncClient                   |
+| UI               | Streamlit                                     |
+| CLI              | Typer + Rich                                  |
 | Semantic scoring | nomic-embed-text (Ollama) + cosine similarity |
-| Fallback scoring | TF-IDF (stdlib only) |
-| Testing | pytest |
+| Fallback scoring | TF-IDF (stdlib only)                          |
+| Testing          | pytest                                        |
 
 ---
 

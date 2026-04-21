@@ -15,7 +15,7 @@ import os
 class OllamaConfig:
     base_url: str = "http://localhost:11434"
     timeout: int = 120
-    default_models: list = field(default_factory=lambda: ["llama3.1:8b", "mistral", "gemma3"])
+    default_models: list = field(default_factory=lambda: ["llama3", "mistral", "gemma"])
     embedding_model: str = "nomic-embed-text"
     judge_model: str = "mistral"
 
@@ -69,7 +69,7 @@ def get_config() -> DictConfig:
             "ollama": {
                 "base_url": "http://localhost:11434",
                 "timeout": 120,
-                "default_models": ["llama3.1:8b", "mistral", "gemma3"],
+                "default_models": ["llama3", "mistral", "gemma"],
                 "embedding_model": "nomic-embed-text",
                 "judge_model": "mistral",
             },
